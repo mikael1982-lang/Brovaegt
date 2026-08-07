@@ -1,0 +1,102 @@
+// Command to read multiple tags
+const byte READ_MULTI_CMD[10] = {0xAA, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF, 0x4A, 0xDD};
+
+// Timing
+unsigned long lastSendTime = 0;
+const unsigned long sendInterval = 2000; // 2 seconds
+
+// State tracking
+unsigned int dataIndex = 0;
+int incomingByte = 0;
+bool paramDetected = false;
+bool codeDetected = false;
+
+void setup() {
+  pinMode(2, OUTPUT); // Most ESP32 boards use GPIO 2 for onboard LED
+
+  Serial.begin(115200);
+
+  // RFID module UART (change pins if needed)
+  Serial2.begin(115200, SERIAL_8N1, 16, 17); // RX=16, TX=17
+
+  Serial.println("ESP32 Ready...");
+  Serial2.write(READ_MULTI_CMD, sizeof(READ_MULTI_CMD));
+}
+
+void loop() {
+  handleTimedRead();
+  handleSerialInput();
+}
+
+// ----------------------
+// Timed command sender (millis version)
+// ----------------------
+void handleTimedRead() {
+  if (millis() - lastSendTime >= sendInterval) {
+    lastSendTime = millis();
+
+    digitalWrite(2, HIGH);
+    Serial2.write(READ_MULTI_CMD, sizeof(READ_MULTI_CMD));
+    digitalWrite(2, LOW);
+  }
+}
+
+// ----------------------
+// Serial data handler
+// ----------------------
+void handleSerialInput() {
+  while (Serial2.available() > 0) {
+    incomingByte = Serial2.read();
+
+    if (incomingByte == 0x02 && !paramDetected) {
+      paramDetected = true;
+      continue;
+    }
+
+    if (paramDetected && incomingByte == 0x22 && !codeDetected) {
+      codeDetected = true;
+      dataIndex = 3;
+      continue;
+    }
+
+    if (codeDetected) {
+      dataIndex++;
+      processData(incomingByte);
+    } else {
+      resetState();
+    }
+  }
+}
+
+// ----------------------
+// Data parsing
+// ----------------------
+void processData(byte value) {
+  if (dataIndex == 6) {
+    Serial.print("RSSI: ");
+    Serial.println(value, HEX);
+  }
+
+  else if (dataIndex == 7 || dataIndex == 8) {
+    if (dataIndex == 7) Serial.print("PC: ");
+    Serial.print(value, HEX);
+    if (dataIndex == 8) Serial.println();
+  }
+
+  else if (dataIndex >= 9 && dataIndex <= 20) {
+    if (dataIndex == 9) Serial.print("EPC: ");
+    Serial.print(value, HEX);
+  }
+
+  else if (dataIndex >= 21) {
+    Serial.println();
+    resetState();
+  }
+}
+
+// ----------------------
+void resetState() {
+  dataIndex = 0;
+  paramDetected = false;
+  codeDetected = false;
+}
