@@ -32,6 +32,7 @@ byte rfidFrame[RFID_MAX_FRAME_LENGTH];
 size_t rfidFrameLength=0;
 String lastRfidEpc="";
 unsigned long lastRfidTagSeen=0;
+bool rfidStopSent=false;
 
 long averageRead(int n){
   long long s=0;
@@ -114,6 +115,14 @@ void processRfidTagFrame(){
     lastRfidEpc=epc;
   }
   lastRfidTagSeen=millis();
+
+  if(!rfidStopSent){
+    Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.println(" ms] STOP POLL SENT");
+    rfidStopSent=true;
+  }
 }
 
 void handleRfidInput(){
@@ -176,11 +185,6 @@ void setup(){
   Serial.print("[");
   Serial.print(millis());
   Serial.println(" ms] SINGLE POLL SENT");
-  delay(5000);
-  Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
-  Serial.print("[");
-  Serial.print(millis());
-  Serial.println(" ms] STOP POLL SENT");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
