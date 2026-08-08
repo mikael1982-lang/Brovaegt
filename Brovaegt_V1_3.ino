@@ -34,6 +34,13 @@ String lastRfidEpc="";
 unsigned long lastRfidTagSeen=0;
 bool rfidStopSent=false;
 
+// Persistent vehicle identity shown on the iPad/web UI.
+// No vehicle names or tare weights are guessed here; add real mappings later.
+String identifiedEpc="";
+String identifiedVehicleName="";
+float identifiedVehicleTare=0.0;
+bool identifiedVehicleKnown=false;
+
 long averageRead(int n){
   long long s=0;
   for(int i=0;i<n;i++){
@@ -47,6 +54,15 @@ void tare(){
   offset=averageRead(50);
 }
 
+bool lookupVehicle(const String& epc,String& name,float& tareWeight){
+  // Vehicle registry intentionally empty until real vehicle names/tare weights are supplied.
+  // Example for later use:
+  // if(epc=="E200..."){ name="Køretøj 1"; tareWeight=1.234; return true; }
+  name="";
+  tareWeight=0.0;
+  return false;
+}
+
 String page(){
 return R"rawliteral(
 <!DOCTYPE html><html><head>
@@ -57,10 +73,18 @@ body{background:#202020;color:white;font-family:Arial;text-align:center;}
 h1{font-size:42px;}
 #weight{font-size:80px;font-weight:bold;}
 #status{font-size:30px;color:#00ff00;}
+#vehicle{font-size:32px;margin-top:28px;font-weight:bold;}
+#epc,#tare,#net{font-size:24px;margin-top:10px;}
+#epc{font-family:monospace;word-break:break-all;}
 </style></head><body>
 <h1>BROVÆGT</h1>
 <div id='weight'>0.000 kg</div>
-<div id='status'>MÅLER</div><div id='last'>Sidste: 0.000 kg</div>
+<div id='status'>MÅLER</div>
+<div id='last'>Sidste: 0.000 kg</div>
+<div id='vehicle'>Køretøj: --</div>
+<div id='epc'>RFID: --</div>
+<div id='tare'>Tomvægt: --</div>
+<div id='net'>Nettovægt: --</div>
 <script>
 setInterval(()=>{
  fetch('/weight').then(r=>r.text()).then(t=>{
@@ -69,6 +93,10 @@ setInterval(()=>{
  document.getElementById('status').innerHTML=p[1];
  document.getElementById('status').style.color=(p[1]=='STABIL')?'#00ff00':'#ffd000';
  document.getElementById('last').innerHTML='Sidste: '+p[2]+' kg';
+ document.getElementById('epc').innerHTML='RFID: '+(p[3]||'--');
+ document.getElementById('vehicle').innerHTML='Køretøj: '+(p[4]||'--');
+ document.getElementById('tare').innerHTML='Tomvægt: '+((p[5]&&p[5]!='-')?p[5]+' kg':'--');
+ document.getElementById('net').innerHTML='Nettovægt: '+((p[6]&&p[6]!='-')?p[6]+' kg':'--');
 });
 },200);
 </script>
@@ -78,10 +106,24 @@ setInterval(()=>{
 void handleRoot(){ server.send(200,"text/html",page()); }
 
 void handleWeight(){
+  String tareText="-";
+  String netText="-";
+  String vehicleText="UKENDT";
+
+  if(identifiedVehicleKnown){
+    tareText=String(identifiedVehicleTare,3);
+    netText=String(currentWeight-identifiedVehicleTare,3);
+    vehicleText=identifiedVehicleName;
+  }
+
   server.send(200,"text/plain",
     String(currentWeight,3)+";"+
     (stable?"STABIL":"MÅLER")+";"+
-    String(lastStableWeight,3));
+    String(lastStableWeight,3)+";"+
+    (identifiedEpc.length()>0?identifiedEpc:"-")+";"+
+    (identifiedEpc.length()>0?vehicleText:"-")+";"+
+    tareText+";"+
+    netText);
 }
 
 void resetRfidFrame(){
@@ -115,6 +157,13 @@ void processRfidTagFrame(){
     lastRfidEpc=epc;
   }
   lastRfidTagSeen=millis();
+
+  identifiedEpc=epc;
+  identifiedVehicleKnown=lookupVehicle(epc,identifiedVehicleName,identifiedVehicleTare);
+  if(!identifiedVehicleKnown){
+    identifiedVehicleName="UKENDT";
+    identifiedVehicleTare=0.0;
+  }
 
   if(!rfidStopSent){
     Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
