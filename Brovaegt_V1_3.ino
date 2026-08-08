@@ -12,7 +12,10 @@ const byte READ_MULTI_CMD[10] = {0xAA, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF,
 const byte SINGLE_POLL_CMD[7] = {0xAA, 0x00, 0x22, 0x00, 0x00, 0x22, 0xDD};
 const byte STOP_MULTI_CMD[7] = {0xAA, 0x00, 0x28, 0x00, 0x00, 0x28, 0xDD};
 const size_t RFID_MAX_FRAME_LENGTH=64;
-const unsigned long RFID_TAG_TIMEOUT=1000;
+const unsigned long RFID_POLL_INTERVAL=300;
+const float VEHICLE_PRESENT_WEIGHT=0.100;
+const float VEHICLE_LEFT_WEIGHT=0.050;
+const unsigned long VEHICLE_LEFT_DELAY=1500;
 
 const char* ssid="BROVAEGT";
 const char* password="brovaegt123";
@@ -31,8 +34,11 @@ unsigned long stableTimer=0;
 byte rfidFrame[RFID_MAX_FRAME_LENGTH];
 size_t rfidFrameLength=0;
 String lastRfidEpc="";
-unsigned long lastRfidTagSeen=0;
 bool rfidStopSent=false;
+bool rfidSearching=true;
+unsigned long lastRfidPoll=0;
+bool vehicleWasOnScale=false;
+unsigned long vehicleLeftTimer=0;
 
 // Persistent vehicle identity shown on the iPad/web UI.
 // No vehicle names or tare weights are guessed here; add real mappings later.
@@ -138,6 +144,22 @@ bool rfidFrameChecksumValid(){
   return checksum==rfidFrame[rfidFrameLength-2];
 }
 
+void startRfidSearch(){
+  rfidSearching=true;
+  rfidStopSent=false;
+  lastRfidEpc="";
+  lastRfidPoll=0;
+  resetRfidFrame();
+}
+
+void handleRfidPolling(){
+  if(!rfidSearching) return;
+  if(lastRfidPoll==0 || millis()-lastRfidPoll>=RFID_POLL_INTERVAL){
+    Serial2.write(SINGLE_POLL_CMD,sizeof(SINGLE_POLL_CMD));
+    lastRfidPoll=millis();
+  }
+}
+
 void processRfidTagFrame(){
   int epcBytes=(((rfidFrame[6]<<8)|rfidFrame[7])>>11&0x1F)*2;
   if(epcBytes<=0 || 8+epcBytes>rfidFrameLength-4) return;
@@ -156,7 +178,6 @@ void processRfidTagFrame(){
     Serial.println(epc);
     lastRfidEpc=epc;
   }
-  lastRfidTagSeen=millis();
 
   identifiedEpc=epc;
   identifiedVehicleKnown=lookupVehicle(epc,identifiedVehicleName,identifiedVehicleTare);
@@ -164,6 +185,8 @@ void processRfidTagFrame(){
     identifiedVehicleName="UKENDT";
     identifiedVehicleTare=0.0;
   }
+
+  rfidSearching=false;
 
   if(!rfidStopSent){
     Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
@@ -217,9 +240,28 @@ void handleRfidInput(){
   }
 }
 
-void updateRfidTagPresence(){
-  if(lastRfidEpc.length()>0 && millis()-lastRfidTagSeen>RFID_TAG_TIMEOUT){
-    lastRfidEpc="";
+void updateVehicleCycle(){
+  if(identifiedEpc.length()==0) return;
+
+  if(currentWeight>VEHICLE_PRESENT_WEIGHT){
+    vehicleWasOnScale=true;
+    vehicleLeftTimer=0;
+  }
+
+  if(vehicleWasOnScale && currentWeight<VEHICLE_LEFT_WEIGHT){
+    if(vehicleLeftTimer==0) vehicleLeftTimer=millis();
+    if(millis()-vehicleLeftTimer>=VEHICLE_LEFT_DELAY){
+      identifiedEpc="";
+      identifiedVehicleName="";
+      identifiedVehicleTare=0.0;
+      identifiedVehicleKnown=false;
+      vehicleWasOnScale=false;
+      vehicleLeftTimer=0;
+      startRfidSearch();
+      Serial.println("RFID READY FOR NEXT VEHICLE");
+    }
+  } else if(currentWeight>=VEHICLE_LEFT_WEIGHT){
+    vehicleLeftTimer=0;
   }
 }
 
@@ -230,10 +272,7 @@ void setup(){
   tare();
 
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
-  Serial2.write(SINGLE_POLL_CMD,sizeof(SINGLE_POLL_CMD));
-  Serial.print("[");
-  Serial.print(millis());
-  Serial.println(" ms] SINGLE POLL SENT");
+  startRfidSearch();
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
@@ -248,7 +287,7 @@ void setup(){
 
 void loop(){
   handleRfidInput();
-  updateRfidTagPresence();
+  handleRfidPolling();
 
   long raw=averageRead(20);
   currentWeight=(offset-raw)/calibrationFactor;
@@ -264,6 +303,7 @@ void loop(){
     stableTimer=0;
   }
 
+  updateVehicleCycle();
   lastWeight=currentWeight;
   server.handleClient();
 }
