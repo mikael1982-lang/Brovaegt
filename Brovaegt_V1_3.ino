@@ -9,7 +9,8 @@
 const int RFID_RX_PIN = 16;
 const int RFID_TX_PIN = 17;
 const byte READ_MULTI_CMD[10] = {0xAA, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF, 0x4A, 0xDD};
-const unsigned long RFID_SEND_INTERVAL = 2000;
+const size_t RFID_MAX_FRAME_LENGTH=64;
+const unsigned long RFID_TAG_TIMEOUT=1000;
 
 const char* ssid="BROVAEGT";
 const char* password="brovaegt123";
@@ -25,11 +26,10 @@ float lastWeight=0.0;
 float lastStableWeight=0.0;
 unsigned long stableTimer=0;
 
-unsigned long lastRfidSendTime=0;
-unsigned int rfidDataIndex=0;
-int rfidIncomingByte=0;
-bool rfidParamDetected=false;
-bool rfidCodeDetected=false;
+byte rfidFrame[RFID_MAX_FRAME_LENGTH];
+size_t rfidFrameLength=0;
+String lastRfidEpc="";
+unsigned long lastRfidTagSeen=0;
 
 long averageRead(int n){
   long long s=0;
@@ -81,63 +81,83 @@ void handleWeight(){
     String(lastStableWeight,3));
 }
 
-void resetRfidState(){
-  rfidDataIndex=0;
-  rfidParamDetected=false;
-  rfidCodeDetected=false;
+void resetRfidFrame(){
+  rfidFrameLength=0;
 }
 
-void processRfidData(byte value){
-  if(rfidDataIndex==6){
-    Serial.print("RSSI: ");
-    Serial.println(value,HEX);
+bool rfidFrameChecksumValid(){
+  byte checksum=0;
+  for(size_t i=1;i<rfidFrameLength-2;i++){
+    checksum+=rfidFrame[i];
   }
-  else if(rfidDataIndex==7 || rfidDataIndex==8){
-    if(rfidDataIndex==7) Serial.print("PC: ");
-    Serial.print(value,HEX);
-    if(rfidDataIndex==8) Serial.println();
+  return checksum==rfidFrame[rfidFrameLength-2];
+}
+
+void processRfidTagFrame(){
+  int epcBytes=(((rfidFrame[6]<<8)|rfidFrame[7])>>11&0x1F)*2;
+  if(epcBytes<=0 || 8+epcBytes>rfidFrameLength-4) return;
+
+  String epc="";
+  for(int i=0;i<epcBytes;i++){
+    if(rfidFrame[8+i]<0x10) epc+="0";
+    epc+=String(rfidFrame[8+i],HEX);
   }
-  else if(rfidDataIndex>=9 && rfidDataIndex<=20){
-    if(rfidDataIndex==9) Serial.print("EPC: ");
-    Serial.print(value,HEX);
+  epc.toUpperCase();
+
+  if(epc!=lastRfidEpc){
+    Serial.print("RFID TAG: ");
+    Serial.println(epc);
+    lastRfidEpc=epc;
   }
-  else if(rfidDataIndex>=21){
-    Serial.println();
-    resetRfidState();
-  }
+  lastRfidTagSeen=millis();
 }
 
 void handleRfidInput(){
   while(Serial2.available()>0){
-    rfidIncomingByte=Serial2.read();
-    Serial.print("RFID RX: ");
-    if(rfidIncomingByte<0x10) Serial.print("0");
-    Serial.println(rfidIncomingByte,HEX);
+    byte rfidByte=Serial2.read();
 
-    if(rfidIncomingByte==0x02 && !rfidParamDetected){
-      rfidParamDetected=true;
+    if(rfidFrameLength==0){
+      if(rfidByte==0xAA){
+        rfidFrame[rfidFrameLength++]=rfidByte;
+      }
       continue;
     }
 
-    if(rfidParamDetected && rfidIncomingByte==0x22 && !rfidCodeDetected){
-      rfidCodeDetected=true;
-      rfidDataIndex=3;
+    if(rfidByte==0xAA){
+      rfidFrame[0]=rfidByte;
+      rfidFrameLength=1;
       continue;
     }
 
-    if(rfidCodeDetected){
-      rfidDataIndex++;
-      processRfidData(rfidIncomingByte);
-    } else {
-      resetRfidState();
+    if(rfidFrameLength>=RFID_MAX_FRAME_LENGTH){
+      resetRfidFrame();
+      continue;
+    }
+
+    rfidFrame[rfidFrameLength++]=rfidByte;
+
+    if(rfidFrameLength>=5){
+      size_t expectedLength=((size_t)rfidFrame[3]<<8|rfidFrame[4])+7;
+      if(expectedLength>RFID_MAX_FRAME_LENGTH){
+        resetRfidFrame();
+      } else if(rfidFrameLength==expectedLength){
+        if(rfidFrame[rfidFrameLength-1]==0xDD &&
+           rfidFrame[1]==0x02 &&
+           rfidFrame[2]==0x22 &&
+           rfidFrameChecksumValid()){
+          processRfidTagFrame();
+        }
+        resetRfidFrame();
+      } else if(rfidFrameLength>expectedLength){
+        resetRfidFrame();
+      }
     }
   }
 }
 
-void handleTimedRfidRead(){
-  if(millis()-lastRfidSendTime>=RFID_SEND_INTERVAL){
-    lastRfidSendTime=millis();
-    // Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
+void updateRfidTagPresence(){
+  if(lastRfidEpc.length()>0 && millis()-lastRfidTagSeen>RFID_TAG_TIMEOUT){
+    lastRfidEpc="";
   }
 }
 
@@ -162,8 +182,8 @@ void setup(){
 }
 
 void loop(){
-  handleTimedRfidRead();
   handleRfidInput();
+  updateRfidTagPresence();
 
   long raw=averageRead(20);
   currentWeight=(offset-raw)/calibrationFactor;
