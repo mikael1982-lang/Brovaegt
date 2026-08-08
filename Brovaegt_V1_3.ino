@@ -110,6 +110,9 @@ void processRfidData(byte value){
 void handleRfidInput(){
   while(Serial2.available()>0){
     rfidIncomingByte=Serial2.read();
+    Serial.print("RFID RX: ");
+    if(rfidIncomingByte<0x10) Serial.print("0");
+    Serial.println(rfidIncomingByte,HEX);
 
     if(rfidIncomingByte==0x02 && !rfidParamDetected){
       rfidParamDetected=true;
@@ -145,7 +148,7 @@ void setup(){
   tare();
 
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
-  // Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
+  Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
