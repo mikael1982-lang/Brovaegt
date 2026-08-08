@@ -10,6 +10,7 @@ const int RFID_RX_PIN = 16;
 const int RFID_TX_PIN = 17;
 const byte READ_MULTI_CMD[10] = {0xAA, 0x00, 0x27, 0x00, 0x03, 0x22, 0xFF, 0xFF, 0x4A, 0xDD};
 const byte SINGLE_POLL_CMD[7] = {0xAA, 0x00, 0x22, 0x00, 0x00, 0x22, 0xDD};
+const byte STOP_MULTI_CMD[7] = {0xAA, 0x00, 0x28, 0x00, 0x00, 0x28, 0xDD};
 const size_t RFID_MAX_FRAME_LENGTH=64;
 const unsigned long RFID_TAG_TIMEOUT=1000;
 
@@ -170,6 +171,10 @@ void setup(){
 
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
   Serial2.write(SINGLE_POLL_CMD,sizeof(SINGLE_POLL_CMD));
+  Serial.println("SINGLE POLL SENT");
+  delay(5000);
+  Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
+  Serial.println("STOP POLL SENT");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
