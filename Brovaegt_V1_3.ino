@@ -134,7 +134,7 @@ void handleRfidInput(){
 void handleTimedRfidRead(){
   if(millis()-lastRfidSendTime>=RFID_SEND_INTERVAL){
     lastRfidSendTime=millis();
-    Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
+    // Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
   }
 }
 
@@ -145,7 +145,7 @@ void setup(){
   tare();
 
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
-  Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
+  // Serial2.write(READ_MULTI_CMD,sizeof(READ_MULTI_CMD));
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
