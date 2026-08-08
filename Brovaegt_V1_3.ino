@@ -107,7 +107,9 @@ void processRfidTagFrame(){
   epc.toUpperCase();
 
   if(epc!=lastRfidEpc){
-    Serial.print("RFID TAG: ");
+    Serial.print("[");
+    Serial.print(millis());
+    Serial.print(" ms] RFID TAG: ");
     Serial.println(epc);
     lastRfidEpc=epc;
   }
@@ -171,10 +173,14 @@ void setup(){
 
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
   Serial2.write(SINGLE_POLL_CMD,sizeof(SINGLE_POLL_CMD));
-  Serial.println("SINGLE POLL SENT");
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.println(" ms] SINGLE POLL SENT");
   delay(5000);
   Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
-  Serial.println("STOP POLL SENT");
+  Serial.print("[");
+  Serial.print(millis());
+  Serial.println(" ms] STOP POLL SENT");
 
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid,password);
