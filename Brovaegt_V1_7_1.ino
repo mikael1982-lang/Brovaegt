@@ -13,9 +13,8 @@ const byte STOP_MULTI_CMD[7] = {0xAA,0x00,0x28,0x00,0x00,0x28,0xDD};
 const size_t RFID_MAX_FRAME_LENGTH = 64;
 const unsigned long RFID_POLL_INTERVAL = 250;
 const unsigned long RFID_AFTER_TAG_PAUSE = 450;
-const unsigned long RFID_STABLE_FINISH_DELAY = 500;
 const float RFID_TRIGGER_WEIGHT = 0.500;
-const float VEHICLE_LEFT_WEIGHT = 0.050;
+const float VEHICLE_LEFT_WEIGHT = 0.200;
 const unsigned long VEHICLE_LEFT_DELAY = 1500;
 const float LOAD_SCALE_FACTOR = 2744.0;
 
@@ -40,7 +39,6 @@ bool rfidSearching = false;
 bool rfidStopSent = false;
 unsigned long lastRfidPoll = 0;
 unsigned long rfidPauseUntil = 0;
-unsigned long rfidStableFinishTimer = 0;
 bool vehicleWasOnScale = false;
 unsigned long vehicleLeftTimer = 0;
 
@@ -53,10 +51,10 @@ struct VehicleEntry {
   String epc;
   String name;
   String owner;
-  String role;      // "vehicle" or "attachment"
+  String role;
   float modelTare;
   float realTare;
-  float maxGross;   // used from primary vehicle
+  float maxGross;
 };
 VehicleEntry vehicles[MAX_VEHICLES];
 int vehicleCount = 0;
@@ -240,7 +238,7 @@ body{background:#202020;color:white;font-family:Arial;margin:0;padding:18px}.wra
 <label>Navn</label><input id='regName' type='text' placeholder='F.eks. Kroghejs eller Tiptrailer 2'>
 <label>Ejer</label><input id='regOwner' type='text' placeholder='F.eks. Mikael'>
 <div class='weightRow'><div class='weightField'><label>Model egenvægt (kg)</label><input id='regModelTare' type='text' readonly placeholder='Vent på stabil vægt'></div><div class='weightButton'><button id='useWeight' class='capture' type='button'>Brug aktuel vægt</button></div></div>
-<div class='hint'>Ved registrering af en enkelt enhed skal enheden stå tom på broen. For vogne/containere kan vi senere lave differencemåling mod et kendt hovedkøretøj.</div>
+<div class='hint'>Ved registrering af en enkelt enhed skal enheden stå tom på broen.</div>
 <label>Virkelig egenvægt (kg)</label><input id='regRealTare' type='text' inputmode='numeric' placeholder='F.eks. 15500'>
 <label>Maks. tilladt totalvægt (kg)</label><input id='regMaxGross' type='text' inputmode='numeric' placeholder='Bruges på hovedkøretøj; 0 for tilkoblet enhed'>
 <button id='saveVehicle' class='primary' type='button'>Gem</button><div id='message'></div>
@@ -350,7 +348,6 @@ void startRfidSearch(){
   rfidStopSent=false;
   lastRfidPoll=0;
   rfidPauseUntil=0;
-  rfidStableFinishTimer=0;
   resetRfidFrame();
   Serial.println("RFID MULTI-TAG SEARCH STARTED - WEIGHT >= 0.500 kg");
 }
@@ -359,7 +356,6 @@ void stopRfidSearch(bool announce){
   rfidSearching=false;
   lastRfidPoll=0;
   rfidPauseUntil=0;
-  rfidStableFinishTimer=0;
   resetRfidFrame();
   if(!rfidStopSent){
     Serial2.write(STOP_MULTI_CMD,sizeof(STOP_MULTI_CMD));
@@ -417,17 +413,10 @@ void updateVehicleCycle(){
     startRfidSearch();
   }
 
-  if(rfidSearching && stable && scannedTagCount>0){
-    if(rfidStableFinishTimer==0) rfidStableFinishTimer=millis();
-    if(millis()-rfidStableFinishTimer>=RFID_STABLE_FINISH_DELAY) stopRfidSearch(true);
-  } else if(!stable){
-    rfidStableFinishTimer=0;
-  }
-
   if(vehicleWasOnScale && currentWeight<VEHICLE_LEFT_WEIGHT){
     if(vehicleLeftTimer==0) vehicleLeftTimer=millis();
     if(millis()-vehicleLeftTimer>=VEHICLE_LEFT_DELAY){
-      if(rfidSearching) stopRfidSearch(false);
+      if(rfidSearching) stopRfidSearch(true);
       clearScan();
       vehicleWasOnScale=false;
       vehicleLeftTimer=0;
