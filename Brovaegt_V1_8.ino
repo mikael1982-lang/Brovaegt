@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <Preferences.h>
+#include <LittleFS.h>
 #include "HX711.h"
 
 #define DOUT 4
@@ -63,16 +64,9 @@ int pickup=-1, dropoff=-1;
 bool journeySaved=false;
 bool clockReady=false;
 uint32_t clockEpoch=0, clockAt=0;
-const int MAX_LOG=80;
-struct WeighLog {String date,time,vehicle,from,to;float load;};
-WeighLog logRows[MAX_LOG];
-int logCount=0;
-String dateNow(){if(!clockReady)return "";time_t t=(time_t)(clockEpoch+(millis()-clockAt)/1000);struct tm *p=gmtime(&t);if(!p)return "";char b[12];strftime(b,sizeof(b),"%Y-%m-%d",p);return String(b);}
-String timeNow(){if(!clockReady)return "";time_t t=(time_t)(clockEpoch+(millis()-clockAt)/1000);struct tm *p=gmtime(&t);if(!p)return "";char b[12];strftime(b,sizeof(b),"%H:%M:%S",p);return String(b);}
-void loadPlaces(){Preferences p;p.begin("places18",true);placeCount=min((int)p.getUInt("count",0),MAX_PLACES);for(int i=0;i<placeCount;i++)places[i]=p.getString(("p"+String(i)).c_str(),"");p.end();}
-void savePlaces(){Preferences p;p.begin("places18",false);p.putUInt("count",placeCount);for(int i=0;i<placeCount;i++)p.putString(("p"+String(i)).c_str(),places[i]);p.end();}
-void loadLog(){Preferences p;p.begin("log18",true);logCount=min((int)p.getUInt("count",0),MAX_LOG);for(int i=0;i<logCount;i++){String v=p.getString(("l"+String(i)).c_str(),"");int a=v.indexOf('|'),b=v.indexOf('|',a+1),c=v.indexOf('|',b+1),d=v.indexOf('|',c+1),e=v.indexOf('|',d+1);if(a<0||b<0||c<0||d<0||e<0){logCount=i;break;}logRows[i]={v.substring(0,a),v.substring(a+1,b),v.substring(b+1,c),v.substring(c+1,d),v.substring(d+1,e),v.substring(e+1).toFloat()};}p.end();}
-void saveLog(){Preferences p;p.begin("log18",false);p.putUInt("count",logCount);for(int i=0;i<logCount;i++){WeighLog &r=logRows[i];p.putString(("l"+String(i)).c_str(),r.date+"|"+r.time+"|"+r.vehicle+"|"+r.from+"|"+r.to+"|"+String(r.load,0));}p.end();}
+bool logStorageReady=false;
+String safeCsv(String s){s.replace(";"," ");s.replace("|"," ");s.replace("\r"," ");s.replace("\n"," ");return s;}
+bool appendLog(String line){if(!logStorageReady)return false;File f=LittleFS.open("/weighings.csv","a");if(!f)return false;size_t n=f.print(line);f.close();return n==line.length();}
 const int MAX_VEHICLES = 30;
 struct VehicleEntry {
   String epc;
@@ -342,14 +336,33 @@ void handlePlaceDelete(){
 }
 String placesPage(){return R"V18PL(<!doctype html><html lang="da"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pladsregister</title><style>body{background:#191919;color:white;font:18px Arial;padding:20px;max-width:720px;margin:auto}input,button{font:18px Arial;padding:13px;margin:5px;border-radius:8px}button{background:#444;color:white;border:1px solid #777}input{width:65%}li{padding:7px}</style><a href="/" style="color:white">← Brovægt</a><h1>Pladsregister</h1><p>Opret og ret steder. Knapperne dannes automatisk på vægtsiden.</p><input id="name" placeholder="Navn på plads"><button onclick="save()">Gem sted</button><div id="msg"></div><ol id="list"></ol><script>var edit=-1,places=[];function api(url,body,cb){var x=new XMLHttpRequest();x.open(body===null?'GET':'POST',url);if(body!==null)x.setRequestHeader('Content-Type','application/x-www-form-urlencoded');x.onload=function(){cb(x.status,x.responseText)};x.send(body)}function load(){api('/places.json',null,function(s,t){if(s!=200)return;places=JSON.parse(t);var box=document.getElementById('list');box.innerHTML='';places.forEach(function(p,i){var li=document.createElement('li');li.appendChild(document.createTextNode(p+' '));var e=document.createElement('button');e.textContent='Redigér';e.onclick=function(){edit=i;document.getElementById('name').value=p};var d=document.createElement('button');d.textContent='Slet';d.onclick=function(){if(confirm('Slet '+p+'?'))api('/place/delete','index='+i,function(s,t){document.getElementById('msg').textContent=s==200?'Slettet':t;load()})};li.appendChild(e);li.appendChild(d);box.appendChild(li)})})}function save(){var n=document.getElementById('name').value.trim();if(!n)return;api('/place/save','index='+edit+'&name='+encodeURIComponent(n),function(s,t){document.getElementById('msg').textContent=s==200?'Gemt':t;if(s==200){edit=-1;document.getElementById('name').value='';load()}})}load();</script></html>)V18PL";}
 String reportPage(){return R"V18RP(<!doctype html><html lang="da"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Dagsrapport</title><style>body{background:#191919;color:white;font:17px Arial;padding:18px;max-width:960px;margin:auto}a{color:#bfe4ff}table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid #555;padding:9px;text-align:left}button{padding:12px;background:#444;color:white;border:1px solid #888;border-radius:8px}</style><a href="/">← Brovægt</a><h1>Dagsrapport</h1><p>Datoer hentes fra iPad. Tilslut iPad til BROVAEGT før dagens første vejning.</p><label>Dato <input type="date" id="date"></label> <a id="csv" href="/report.csv">Hent CSV</a><p id="total"></p><table><thead><tr><th>Tid</th><th>Køretøj</th><th>Fra</th><th>Til</th><th>Last (kg)</th></tr></thead><tbody id="rows"></tbody></table><script>var date=document.getElementById('date');date.value=new Date().toLocaleDateString('sv-SE');function update(){var d=date.value;document.getElementById('csv').href='/report.csv?date='+encodeURIComponent(d);var x=new XMLHttpRequest();x.open('GET','/report.json?date='+encodeURIComponent(d));x.onload=function(){if(x.status!=200)return;var a=JSON.parse(x.responseText),sum=0,b=document.getElementById('rows');b.innerHTML='';a.forEach(function(r){sum+=r.load;var tr=document.createElement('tr');[r.time,r.vehicle,r.from,r.to,Math.round(r.load).toLocaleString('da-DK')].forEach(function(v){var td=document.createElement('td');td.textContent=v;tr.appendChild(td)});b.appendChild(tr)});document.getElementById('total').textContent=a.length+' transporter · '+Math.round(sum).toLocaleString('da-DK')+' kg samlet last'};x.send()}date.onchange=update;update();</script></html>)V18RP";}
-void handleReportJson(){String day=server.arg("date"),j="[";bool first=true;for(int i=0;i<logCount;i++){WeighLog&r=logRows[i];if(day.length()&&r.date!=day)continue;if(!first)j+=",";first=false;j+="{\"time\":\""+jsonEscape(r.time)+"\",\"vehicle\":\""+jsonEscape(r.vehicle)+"\",\"from\":\""+jsonEscape(r.from)+"\",\"to\":\""+jsonEscape(r.to)+"\",\"load\":"+String(r.load,0)+"}";}j+="]";server.send(200,"application/json",j);}
-void handleReportCsv(){String day=server.arg("date");String csv="Dato;Tid;Koeretoej;Afhentning;Aflaesning;Last_kg\r\n";for(int i=0;i<logCount;i++){WeighLog&r=logRows[i];if(day.length()&&r.date!=day)continue;csv+=r.date+";"+r.time+";"+r.vehicle+";"+r.from+";"+r.to+";"+String(r.load,0)+"\r\n";}server.sendHeader("Content-Disposition","attachment; filename=brovaegt.csv");server.send(200,"text/csv; charset=utf-8",csv);}
+void handleReportJson(){
+ String day=server.arg("date"),j="[";bool first=true;
+ if(logStorageReady){File f=LittleFS.open("/weighings.csv","r");if(f){while(f.available()){
+ String line=f.readStringUntil('\n');line.trim();int p1=line.indexOf(';'),p2=line.indexOf(';',p1+1),p3=line.indexOf(';',p2+1),p4=line.indexOf(';',p3+1),p5=line.indexOf(';',p4+1);
+ if(p1<0||p2<0||p3<0||p4<0||p5<0)continue;
+ if(day.length()&&line.substring(0,p1)!=day)continue;
+ if(!first)j+=",";first=false;
+ j+="{\"time\":\""+jsonEscape(line.substring(p1+1,p2))+"\",\"vehicle\":\""+jsonEscape(line.substring(p2+1,p3))+"\",\"from\":\""+jsonEscape(line.substring(p3+1,p4))+"\",\"to\":\""+jsonEscape(line.substring(p4+1,p5))+"\",\"load\":"+String(line.substring(p5+1).toFloat(),0)+"}";
+ }f.close();}}
+ j+="]";server.send(200,"application/json",j);
+}
+void handleReportCsv(){
+ String day=server.arg("date");
+ server.sendHeader("Content-Disposition","attachment; filename=brovaegt.csv");
+ server.setContentLength(CONTENT_LENGTH_UNKNOWN);server.send(200,"text/csv; charset=utf-8","");
+ server.sendContent("Dato;Tid;Koeretoej;Afhentning;Aflaesning;Last_kg\r\n");
+ if(logStorageReady){File f=LittleFS.open("/weighings.csv","r");if(f){while(f.available()){
+ String line=f.readStringUntil('\n');line.trim();if(!line.length())continue;
+ if(day.length()&&!line.startsWith(day+";"))continue;server.sendContent(line+"\r\n");
+ }f.close();}}
+ server.sendContent("");
+}
 void trySaveJourney(){
  if(journeySaved||!vehicleWasOnScale||rfidSearching||!stable||!primaryKnown||unknownTagCount>0||pickup<0||dropoff<0||pickup==dropoff||!clockReady)return;
  float load=calculatedRealLoad();if(load<=0)return;
- if(logCount>=MAX_LOG){for(int i=1;i<logCount;i++)logRows[i-1]=logRows[i];logCount--;}
- logRows[logCount++]={dateNow(),timeNow(),primaryName,places[pickup],places[dropoff],load};
- saveLog();journeySaved=true;Serial.println("TRANSPORT SAVED");
+ if(!appendLog(safeCsv(dateNow())+";"+safeCsv(timeNow())+";"+safeCsv(primaryName)+";"+safeCsv(places[pickup])+";"+safeCsv(places[dropoff])+";"+String(load,0)+"\n")){Serial.println("LOG WRITE FAILED");return;}
+ journeySaved=true;Serial.println("TRANSPORT SAVED");
 }
 
 void handleRoot(){ server.send(200,"text/html",mainPage()); }
@@ -677,7 +690,8 @@ void setup(){
   tareScale();
   loadVehicles();
   loadPlaces();
-  loadLog();
+  logStorageReady=LittleFS.begin(false);
+  if(!logStorageReady)Serial.println("LittleFS unavailable - logging disabled");
   Serial.print("UNITS LOADED: "); Serial.println(vehicleCount);
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
   readRfidTransmitPower();
