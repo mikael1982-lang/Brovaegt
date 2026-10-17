@@ -64,6 +64,32 @@ int pickup=-1, dropoff=-1;
 bool journeySaved=false;
 bool clockReady=false;
 uint32_t clockEpoch=0, clockAt=0;
+String dateNow(){
+ if(!clockReady)return "";
+ time_t t=(time_t)(clockEpoch+(millis()-clockAt)/1000);
+ struct tm *p=gmtime(&t);
+ if(!p)return "";
+ char b[12];strftime(b,sizeof(b),"%Y-%m-%d",p);return String(b);
+}
+String timeNow(){
+ if(!clockReady)return "";
+ time_t t=(time_t)(clockEpoch+(millis()-clockAt)/1000);
+ struct tm *p=gmtime(&t);
+ if(!p)return "";
+ char b[12];strftime(b,sizeof(b),"%H:%M:%S",p);return String(b);
+}
+void loadPlaces(){
+ Preferences p;p.begin("places18",true);
+ placeCount=min((int)p.getUInt("count",0),MAX_PLACES);
+ for(int i=0;i<placeCount;i++)places[i]=p.getString(("p"+String(i)).c_str(),"");
+ p.end();
+}
+void savePlaces(){
+ Preferences p;p.begin("places18",false);
+ p.putUInt("count",placeCount);
+ for(int i=0;i<placeCount;i++)p.putString(("p"+String(i)).c_str(),places[i]);
+ p.end();
+}
 bool logStorageReady=false;
 String safeCsv(String s){s.replace(";"," ");s.replace("|"," ");s.replace("\r"," ");s.replace("\n"," ");return s;}
 bool appendLog(String line){if(!logStorageReady)return false;File f=LittleFS.open("/weighings.csv","a");if(!f)return false;size_t n=f.print(line);f.close();return n==line.length();}
