@@ -385,8 +385,28 @@ void handleReportCsv(){
  server.sendContent("");
 }
 void trySaveJourney(){
- if(journeySaved||!vehicleWasOnScale||rfidSearching||!stable||!primaryKnown||unknownTagCount>0||pickup<0||dropoff<0||pickup==dropoff||!clockReady)return;
- float load=calculatedRealLoad();if(load<=0)return;
+ if(journeySaved)return;
+ // Diagnose only when a vehicle is on the scale; at most once every 3 seconds.
+ static unsigned long lastLogDiagnostic=0;
+ String reason="";
+ if(!vehicleWasOnScale) return;
+ if(rfidSearching)reason="RFID scanning still active";
+ else if(!stable)reason="Weight not stable";
+ else if(!primaryKnown)reason="Vehicle not recognized";
+ else if(unknownTagCount>0)reason="Unknown RFID tag present";
+ else if(pickup<0||dropoff<0)reason="Pickup or dropoff not selected";
+ else if(pickup==dropoff)reason="Pickup and dropoff are identical";
+ else if(!clockReady)reason="CLOCK NOT SYNCED - browser time missing";
+ else if(!logStorageReady)reason="LITTLEFS NOT READY - storage unavailable";
+ else if(calculatedRealLoad()<=0)reason="Calculated load is zero or negative";
+ if(reason.length()){
+   if(millis()-lastLogDiagnostic>=3000UL){
+     Serial.print("SAVE BLOCKED: ");Serial.println(reason);
+     lastLogDiagnostic=millis();
+   }
+   return;
+ }
+ float load=calculatedRealLoad();
  if(!appendLog(safeCsv(dateNow())+";"+safeCsv(timeNow())+";"+safeCsv(primaryName)+";"+safeCsv(places[pickup])+";"+safeCsv(places[dropoff])+";"+String(load,0)+"\n")){Serial.println("LOG WRITE FAILED");return;}
  journeySaved=true;Serial.println("TRANSPORT SAVED");
 }
