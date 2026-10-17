@@ -736,7 +736,15 @@ void setup(){
   tareScale();
   loadVehicles();
   loadPlaces();
+  // First try to mount without changing stored data. If the filesystem is
+  // corrupt or unformatted, format ONLY the LittleFS partition and retry.
   logStorageReady=LittleFS.begin(false);
+  if(!logStorageReady){
+    Serial.println("LittleFS mount failed - formatting LittleFS partition and retrying");
+    LittleFS.end();
+    logStorageReady=LittleFS.begin(true);
+    if(logStorageReady)Serial.println("LittleFS recovered - daily report storage ready");
+  }
   if(!logStorageReady)Serial.println("LittleFS unavailable - logging disabled");
   Serial.print("UNITS LOADED: "); Serial.println(vehicleCount);
   Serial2.begin(115200,SERIAL_8N1,RFID_RX_PIN,RFID_TX_PIN);
